@@ -9,6 +9,7 @@
  "field_order": [
   "site_label",
   "enabled",
+  "allow_customisations",
   "environment",
   "frappe_version",
   "column_break_conn",
@@ -41,6 +42,13 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Enabled"
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_customisations",
+   "fieldtype": "Check",
+   "label": "Allow Customisations",
+   "description": "Let the customisations suite write Custom Fields, Property Setters, Client/Server Scripts and custom DocTypes to this site. Off by default \u2014 tick it only for a site kept for that purpose."
   },
   {
    "default": "Local",

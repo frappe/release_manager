@@ -17,6 +17,8 @@ from traceback import format_exception
 import frappe
 from frappe.utils import now_datetime
 
+from release_manager.diagnosis import diagnose
+
 _STEP_TO_RESULT = {"pass": "Passed", "fail": "Failed", "skip": "Skipped"}
 
 
@@ -30,6 +32,8 @@ def _site_config(site_doc) -> dict:
         "auth": site_doc.auth_type,
         "username": site_doc.username,
         "api_key": site_doc.api_key,
+        # Gates the customisations suite, which writes schema to the target.
+        "allow_customisations": bool(site_doc.get("allow_customisations")),
     }
     if site_doc.auth_type == "login":
         cfg["password"] = site_doc.get_password("password") if site_doc.password else None
@@ -314,6 +318,8 @@ def execute_run(run: str) -> None:
                 if st.get("error"):
                     errs.append(f"{st['step']}: {st['error']}")
             res.error = "\n".join(errs)
+            if res.status in ("Failed", "Partial"):
+                res.corrective_action = diagnose(res.error) or res.corrective_action
             res.insert(ignore_permissions=True)
 
             log_lines.append(f"[{res.status}] {suite['suite']} ({suite.get('app_version') or '-'})")
@@ -490,6 +496,8 @@ def _record_ui_results(doc, version: str, data: dict, proc) -> None:
         res.duration_ms = duration
         res.status = "Failed" if spec_fail and not spec_pass else "Partial" if spec_fail else "Passed"
         res.error = "\n".join(e for e in errs if e)
+        if res.status in ("Failed", "Partial"):
+            res.corrective_action = diagnose(res.error) or res.corrective_action
         res.insert(ignore_permissions=True)
         log_lines.append(f"[{res.status}] {spec.get('spec')}")
         any_fail = any_fail or spec_fail
