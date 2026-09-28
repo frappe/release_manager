@@ -12,7 +12,8 @@
   "required_app",
   "enabled",
   "description",
-  "steps_preview"
+  "steps_preview",
+  "guards"
  ],
  "fields": [
   {
@@ -57,6 +58,13 @@
    "fieldtype": "Small Text",
    "label": "Steps",
    "read_only": 1
+  },
+  {
+   "fieldname": "guards",
+   "fieldtype": "Small Text",
+   "label": "Guards Upstream Changes",
+   "read_only": 1,
+   "description": "Upstream commits/PRs this case regression-tests, as app@commit or app#pr."
   }
  ],
  "index_web_pages_for_search": 1,
