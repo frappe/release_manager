@@ -51,6 +51,24 @@ tokens — no rework.
 
 The **Release Manager** Workspace gives shortcuts and pass/fail dashboard charts.
 
+## Deploying to Frappe Cloud
+
+Add **only this app** in *Add app from GitHub* (`https://github.com/frappe/release_manager`).
+The `release_tests` engine is a plain Python library, not a Frappe app — it is declared
+as a pip dependency here and installed automatically with this app. Adding it through
+that dialog will fail, and should.
+
+Two things make the repo acceptable to Frappe Cloud, both in `pyproject.toml`:
+
+- `[tool.bench.frappe-dependencies]` — without it the dialog reports *"Could not find a
+  compatible Frappe version in pyproject.toml"*.
+- `[tool.bench.assets]` — tells the build to compile the Vue dashboard, otherwise
+  `/release` deploys empty.
+
+The engine is referenced as `git+https://github.com/frappe/release_tests.git@main`, so
+a bench build picks up whatever is on that branch. Push `release_tests` before
+rebuilding if you want engine changes included.
+
 ## Dev install
 
 ```bash
