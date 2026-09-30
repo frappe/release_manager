@@ -70,6 +70,9 @@ def _step_error(step: dict) -> str | None:
         value = details.get(key)
         if value:
             lines.append(f"{label}: {', '.join(value) if isinstance(value, list) else value}")
+    # Keep the engine's raw message too: diagnose() matches on it to suggest a fix.
+    if step.get("error"):
+        lines.append(f"Error: {step['error']}")
     return "\n".join(lines)
 
 
