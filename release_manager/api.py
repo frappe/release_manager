@@ -42,6 +42,61 @@ def _site_config(site_doc) -> dict:
     return cfg
 
 
+# Labels for the structured failure details the engine attaches to a failed step
+# (what was checked, as whom, expected vs actual, where, and the upstream change).
+_DETAIL_LABELS = (
+    ("kind", "Kind"),
+    ("check", "Check"),
+    ("user", "User"),
+    ("roles", "Roles"),
+    ("expected", "Expected"),
+    ("actual", "Actual"),
+    ("endpoint", "Endpoint"),
+    ("guards", "Guards"),
+    ("hint", "Hint"),
+)
+
+
+def _step_error(step: dict) -> str | None:
+    """A step's error, expanded with its failure details when the engine sent them,
+    so the Test Result says what broke and for whom without re-running."""
+    details = step.get("details") if step.get("status") == "fail" else None
+    if not details:
+        return step.get("error") or (
+            f"Skipped: {step['error']}" if step.get("status") == "skip" and step.get("error") else None
+        )
+    lines = []
+    for key, label in _DETAIL_LABELS:
+        value = details.get(key)
+        if value:
+            lines.append(f"{label}: {', '.join(value) if isinstance(value, list) else value}")
+    # Keep the engine's raw message too: diagnose() matches on it to suggest a fix.
+    if step.get("error"):
+        lines.append(f"Error: {step['error']}")
+    return "\n".join(lines)
+
+
+def _run_rate_lines(totals: dict, kinds: dict) -> list[str]:
+    """Summary lines led by run rate: the share of checks that reached a verdict.
+
+    The suites exist to catch problems users would hit, so a check that found an
+    issue counts as a result; a skip or a broken test means nothing was learned.
+    """
+    total = sum(totals.values())
+    if not total:
+        return []
+    issues = kinds.get("issue", 0)
+    reached = totals.get("pass", 0) + issues
+    return [
+        "",
+        f"Run rate: {round(100 * reached / total)}% ({reached} of {total} checks reached a verdict)",
+        f"  Issues found: {issues}",
+        f"  Needs triage: {kinds.get('needs triage', 0)}",
+        f"  Passed: {totals.get('pass', 0)}",
+        f"  Not checked: {totals.get('skip', 0)} skipped, {kinds.get('harness', 0)} broken tests",
+    ]
+
+
 def _suites_for_run(run_doc) -> list[str] | None:
     """Resolve the selected Test Cases to engine suite names (None = all)."""
     if not run_doc.test_cases:
@@ -127,6 +182,19 @@ _CURATED_GROUPS = {
         "Suites guarding specific upstream fixes. Each carries the commits/PRs it covers "
         "in its Guards field.",
         ["frappe_filters", "frappe_jinja_sandbox", "frappe_permissions"],
+    ),
+    "Version 16 Polished (Sep 2026)": (
+        "The version-16-polished release of Frappe, ERPNext and HRMS: security fixes checked "
+        "as users with different roles, new features, and the upgrade patches. Needs "
+        "Allow Customisations on the site; skips on sites not running version-16-polished.",
+        [
+            "v16p_upgrade_checks",
+            "v16p_security",
+            "v16p_frappe_features",
+            "v16p_erpnext",
+            "v16p_hrms_security",
+            "v16p_hrms",
+        ],
     ),
     "Customisation Layer": (
         "Custom Fields, Property Setters, Client/Server Scripts and a custom DocType — "
@@ -274,6 +342,7 @@ def execute_run(run: str) -> None:
     suites = _suites_for_run(doc)
 
     totals = {"pass": 0, "fail": 0, "skip": 0}
+    kinds: dict[str, int] = {}  # failures by kind: issue / needs triage / harness
     log_lines: list[str] = []
     any_fail = any_pass = False
 
@@ -320,11 +389,11 @@ def execute_run(run: str) -> None:
                             "step": st["step"],
                             "status": st["status"],
                             "duration_ms": st["duration_ms"],
-                            "error": st.get("error"),
+                            "error": _step_error(st),
                         },
                     )
                     if st.get("error"):
-                        errs.append(f"{st['step']}: {st['error']}")
+                        errs.append(f"{st['step']}: {_step_error(st)}")
                 res.error = "\n".join(errs)
                 if res.status in ("Failed", "Partial"):
                     res.corrective_action = diagnose(res.error) or res.corrective_action
@@ -333,7 +402,12 @@ def execute_run(run: str) -> None:
                 # Only count a suite's steps once its result is safely recorded.
                 for st in suite["steps"]:
                     totals[st["status"]] = totals.get(st["status"], 0) + 1
+                    if st["status"] == "fail":
+                        kind = (st.get("details") or {}).get("kind", "needs triage")
+                        kinds[kind] = kinds.get(kind, 0) + 1
                 log_lines.append(f"[{res.status}] {suite['suite']} ({suite.get('app_version') or '-'})")
+                if suite.get("skip_reason"):
+                    log_lines.append(f"    skipped: {suite['skip_reason']}")
                 any_fail = any_fail or suite["status"] == "fail"
                 any_pass = any_pass or suite["status"] == "pass"
             except Exception as exc:  # noqa: BLE001 - record + carry on to the next suite
@@ -353,6 +427,7 @@ def execute_run(run: str) -> None:
 
     doc.db_set("status", "Failed" if any_fail and not any_pass else "Partial" if any_fail else "Passed")
     doc.db_set("finished_at", now_datetime())
+    log_lines.extend(_run_rate_lines(totals, kinds))
     doc.db_set("log", "\n".join(log_lines) or "No applicable suites ran.", commit=True)
     frappe.db.commit()
 
