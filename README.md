@@ -9,6 +9,10 @@ Frappe Desk or the Vue dashboard at **`/release`**.
 > The product, app package, and repo are all named **`release_manager`**. The
 > DocType names below match what you see in the Frappe Desk.
 
+> **Where this is headed:** see [ROADMAP.md](ROADMAP.md) for the plan to grow this
+> from a test runner into a full release-management platform that follows Frappe's
+> branching / semver / `bench release` process.
+
 ## Running against Frappe Cloud (or any remote site)
 
 The engine is a pure external HTTP client, so no install is needed on the target.

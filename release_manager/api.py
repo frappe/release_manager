@@ -281,8 +281,13 @@ def execute_run(run: str) -> None:
         for event in engine.iter_run_site(_site_config(site), suites=suites):
             etype = event.get("type")
             if etype == "error":
+                # Fatal: couldn't connect to / detect the target, so nothing can run.
                 doc.db_set("status", "Failed")
-                doc.db_set("log", event["error"], commit=True)
+                doc.db_set(
+                    "log",
+                    "\n".join([*log_lines, f"Connection/detection failed: {event['error']}"]).strip(),
+                    commit=True,
+                )
                 doc.db_set("finished_at", now_datetime())
                 frappe.db.commit()
                 return
@@ -293,53 +298,62 @@ def execute_run(run: str) -> None:
                 doc.db_set("transactions_created", event.get("transactions", 0), commit=True)
                 continue
 
-            suite = event["suite"]  # a suite just finished — record it now
-            errs = []
-            res = frappe.new_doc("Test Result")
-            res.run = run
-            res.site = doc.site
-            res.suite = suite["suite"]
-            res.test_case = suite["suite"]
-            res.app_version = suite.get("app_version")
-            res.status = _STEP_TO_RESULT.get(suite["status"], "Skipped")
-            res.duration_ms = sum(st["duration_ms"] for st in suite["steps"])
-            for st in suite["steps"]:
-                totals[st["status"]] = totals.get(st["status"], 0) + 1
-                res.append(
-                    "steps",
-                    {
-                        "suite": st["suite"],
-                        "step": st["step"],
-                        "status": st["status"],
-                        "duration_ms": st["duration_ms"],
-                        "error": st.get("error"),
-                    },
-                )
-                if st.get("error"):
-                    errs.append(f"{st['step']}: {st['error']}")
-            res.error = "\n".join(errs)
-            if res.status in ("Failed", "Partial"):
-                res.corrective_action = diagnose(res.error) or res.corrective_action
-            res.insert(ignore_permissions=True)
+            # A suite just finished — record it. Isolate this per suite so that a
+            # single bad suite (or a hiccup while saving its result) is logged and
+            # the run keeps going through the remaining suites instead of aborting.
+            suite = event["suite"]
+            try:
+                errs = []
+                res = frappe.new_doc("Test Result")
+                res.run = run
+                res.site = doc.site
+                res.suite = suite["suite"]
+                res.test_case = suite["suite"]
+                res.app_version = suite.get("app_version")
+                res.status = _STEP_TO_RESULT.get(suite["status"], "Skipped")
+                res.duration_ms = sum(st["duration_ms"] for st in suite["steps"])
+                for st in suite["steps"]:
+                    res.append(
+                        "steps",
+                        {
+                            "suite": st["suite"],
+                            "step": st["step"],
+                            "status": st["status"],
+                            "duration_ms": st["duration_ms"],
+                            "error": st.get("error"),
+                        },
+                    )
+                    if st.get("error"):
+                        errs.append(f"{st['step']}: {st['error']}")
+                res.error = "\n".join(errs)
+                if res.status in ("Failed", "Partial"):
+                    res.corrective_action = diagnose(res.error) or res.corrective_action
+                res.insert(ignore_permissions=True)
 
-            log_lines.append(f"[{res.status}] {suite['suite']} ({suite.get('app_version') or '-'})")
-            any_fail = any_fail or suite["status"] == "fail"
-            any_pass = any_pass or suite["status"] == "pass"
+                # Only count a suite's steps once its result is safely recorded.
+                for st in suite["steps"]:
+                    totals[st["status"]] = totals.get(st["status"], 0) + 1
+                log_lines.append(f"[{res.status}] {suite['suite']} ({suite.get('app_version') or '-'})")
+                any_fail = any_fail or suite["status"] == "fail"
+                any_pass = any_pass or suite["status"] == "pass"
+            except Exception as exc:  # noqa: BLE001 - record + carry on to the next suite
+                frappe.db.rollback()
+                any_fail = True
+                log_lines.append(f"[Errored] {suite.get('suite', '?')}: {exc}")
+
             doc.db_set("total_steps", sum(totals.values()))
             doc.db_set("passed", totals.get("pass", 0))
             doc.db_set("failed", totals.get("fail", 0))
             doc.db_set("skipped", totals.get("skip", 0))
             doc.db_set("log", "\n".join(log_lines), commit=True)  # live commit
-    except Exception as exc:  # noqa: BLE001
-        doc.db_set("status", "Failed")
-        doc.db_set("log", ("\n".join(log_lines) + f"\nExecution error: {exc}").strip(), commit=True)
-        doc.db_set("finished_at", now_datetime())
-        frappe.db.commit()
-        return
+    except Exception as exc:  # noqa: BLE001 - the engine stream itself died; finalize what we have
+        frappe.db.rollback()
+        any_fail = True
+        log_lines.append(f"Execution error: {exc}")
 
     doc.db_set("status", "Failed" if any_fail and not any_pass else "Partial" if any_fail else "Passed")
     doc.db_set("finished_at", now_datetime())
-    doc.db_set("log", "\n".join(log_lines) or "No applicable suites ran.")
+    doc.db_set("log", "\n".join(log_lines) or "No applicable suites ran.", commit=True)
     frappe.db.commit()
 
 
