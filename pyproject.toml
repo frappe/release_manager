@@ -8,8 +8,12 @@ requires-python = ">=3.10"
 readme = "README.md"
 dynamic = ["version"]
 dependencies = [
-    # The execution engine. Installed editable from ~/release_tests in dev.
-    "release_tests",
+    # The execution engine. It is a plain Python library, not a Frappe app, and is
+    # not published on PyPI — so it is pulled straight from GitHub. This is what
+    # lets Frappe Cloud resolve it while installing this app; a bare "release_tests"
+    # cannot be resolved anywhere. For local dev, install it editable first
+    # (see README) and pip will keep that checkout.
+    "release_tests @ git+https://github.com/frappe/release_tests.git@main",
 ]
 
 [build-system]
@@ -18,3 +22,17 @@ build-backend = "flit_core.buildapi"
 
 [tool.flit.module]
 name = "release_manager"
+
+# Required by bench / Frappe Cloud to pick a compatible Frappe version. Without
+# this section the Frappe Cloud "Add app from GitHub" dialog refuses the repo with
+# "Could not find a compatible Frappe version in pyproject.toml".
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0,<17.0.0"
+
+# Lets bench / Frappe Cloud build the Vue dashboard served at /release. Mirrors
+# the buildConfig in frontend/vite.config.js; without it the SPA is not built on
+# deploy and /release renders nothing.
+[tool.bench.assets]
+build_dir = "./frontend"
+out_dir = "../release_manager/public/frontend"
+index_html_path = "../release_manager/www/release/index.html"

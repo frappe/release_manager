@@ -12,9 +12,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+from traceback import format_exception
 
 import frappe
 from frappe.utils import now_datetime
+
+from release_manager.diagnosis import diagnose
 
 _STEP_TO_RESULT = {"pass": "Passed", "fail": "Failed", "skip": "Skipped"}
 
@@ -29,6 +32,8 @@ def _site_config(site_doc) -> dict:
         "auth": site_doc.auth_type,
         "username": site_doc.username,
         "api_key": site_doc.api_key,
+        # Gates the customisations suite, which writes schema to the target.
+        "allow_customisations": bool(site_doc.get("allow_customisations")),
     }
     if site_doc.auth_type == "login":
         cfg["password"] = site_doc.get_password("password") if site_doc.password else None
@@ -70,9 +75,11 @@ def sync_catalog() -> int:
         doc.required_app = entry["required_app"]
         doc.description = entry["description"]
         doc.steps_preview = preview
+        doc.guards = "\n".join(entry.get("guards") or [])
         doc.save(ignore_permissions=True)
         count += 1
     seed_example_groups()
+    seed_curated_groups()
     frappe.db.commit()
     return count
 
@@ -106,6 +113,52 @@ def seed_example_groups() -> int:
         group = frappe.new_doc("Test Case Group")
         group.group_name = group_name
         group.description = f"Auto-seeded: all {app} test cases."
+        for case in cases:
+            group.append("test_cases", {"test_case": case})
+        group.insert(ignore_permissions=True)
+        created += 1
+    return created
+
+
+# Groups that cut across apps, so they can't be derived from required_app the way
+# seed_example_groups does. Membership is by engine suite name.
+_CURATED_GROUPS = {
+    "Release Regressions": (
+        "Suites guarding specific upstream fixes. Each carries the commits/PRs it covers "
+        "in its Guards field.",
+        ["frappe_filters", "frappe_jinja_sandbox", "frappe_permissions"],
+    ),
+    "Customisation Layer": (
+        "Custom Fields, Property Setters, Client/Server Scripts and a custom DocType — "
+        "run against the dedicated customisation site.",
+        ["customisations"],
+    ),
+}
+
+
+@frappe.whitelist()
+def seed_curated_groups() -> int:
+    """Create the cross-app groups the weekly release plans are built from.
+
+    Kept separate from ``seed_example_groups`` because that one buckets cases by
+    ``required_app``; these deliberately mix apps (a regression group spans frappe
+    and erpnext) so they can't come from the same mapping. Idempotent: an existing
+    group is left exactly as the user has edited it.
+    """
+    created = 0
+    for group_name, (description, suites) in _CURATED_GROUPS.items():
+        if frappe.db.exists("Test Case Group", group_name):
+            continue
+        cases = [
+            name
+            for suite in suites
+            if (name := frappe.db.get_value("Release Test Case", {"suite": suite}, "name"))
+        ]
+        if not cases:
+            continue
+        group = frappe.new_doc("Test Case Group")
+        group.group_name = group_name
+        group.description = description
         for case in cases:
             group.append("test_cases", {"test_case": case})
         group.insert(ignore_permissions=True)
@@ -151,6 +204,40 @@ def test_connection(site: str) -> dict:
 
 
 # ------------------------------------------------------------------- run a test
+def mark_run_failed(job, connection, type, value, traceback) -> None:  # noqa: A002
+    """RQ failure callback — stop a crashed job leaving its run stuck at Queued.
+
+    ``execute_run`` only sets status="Running" *after* ``frappe.get_doc`` succeeds,
+    so anything that breaks earlier leaves the Release Test showing "Queued"
+    forever. Frappe's own ``log_error`` fallback can't help there: it needs a DB
+    query too, so a broken worker fails inside the error handler as well and no
+    Error Log is ever written (seen 2026-08-25, stale worker holding pre-upgrade
+    modules after a frappe version bump). Recording the traceback on the run
+    itself is the only place guaranteed to be reachable.
+    """
+    from frappe.utils.background_jobs import truncate_failed_registry
+
+    run = (job.kwargs or {}).get("run")
+    try:
+        if run and frappe.db and frappe.db.exists("Release Test", run):
+            detail = "".join(format_exception(type, value, traceback))
+            frappe.db.set_value(
+                "Release Test",
+                run,
+                {
+                    "status": "Failed",
+                    "finished_at": now_datetime(),
+                    "log": f"Background job failed:\n\n{detail}"[:5000],
+                },
+                update_modified=False,
+            )
+            frappe.db.commit()
+    except Exception:  # noqa: BLE001 - a failure handler must never itself fail
+        pass
+    # Preserve frappe's default behaviour, which we displace by passing on_failure.
+    truncate_failed_registry(job, connection, type, value, traceback)
+
+
 @frappe.whitelist()
 def run_now(run: str) -> bool:
     """Queue execution of a Release Test in the background."""
@@ -158,7 +245,12 @@ def run_now(run: str) -> bool:
     doc.db_set("status", "Queued")
     frappe.db.commit()
     frappe.enqueue(
-        "release_manager.api.execute_run", queue="long", timeout=1500, run=run, enqueue_after_commit=True
+        "release_manager.api.execute_run",
+        queue="long",
+        timeout=1500,
+        run=run,
+        enqueue_after_commit=True,
+        on_failure=mark_run_failed,
     )
     return True
 
@@ -234,6 +326,8 @@ def execute_run(run: str) -> None:
                     if st.get("error"):
                         errs.append(f"{st['step']}: {st['error']}")
                 res.error = "\n".join(errs)
+                if res.status in ("Failed", "Partial"):
+                    res.corrective_action = diagnose(res.error) or res.corrective_action
                 res.insert(ignore_permissions=True)
 
                 # Only count a suite's steps once its result is safely recorded.
@@ -311,6 +405,7 @@ def run_ui_test(site: str, headed: int = 1) -> str:
         run=run.name,
         headed=int(headed),
         enqueue_after_commit=True,
+        on_failure=mark_run_failed,
     )
     frappe.db.commit()
     return run.name
@@ -415,6 +510,8 @@ def _record_ui_results(doc, version: str, data: dict, proc) -> None:
         res.duration_ms = duration
         res.status = "Failed" if spec_fail and not spec_pass else "Partial" if spec_fail else "Passed"
         res.error = "\n".join(e for e in errs if e)
+        if res.status in ("Failed", "Partial"):
+            res.corrective_action = diagnose(res.error) or res.corrective_action
         res.insert(ignore_permissions=True)
         log_lines.append(f"[{res.status}] {spec.get('spec')}")
         any_fail = any_fail or spec_fail
