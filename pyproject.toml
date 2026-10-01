@@ -7,14 +7,7 @@ description = "Control plane (UI) for release_tests — schedule and run release
 requires-python = ">=3.10"
 readme = "README.md"
 dynamic = ["version"]
-dependencies = [
-    # The execution engine. It is a plain Python library, not a Frappe app, and is
-    # not published on PyPI — so it is pulled straight from GitHub. This is what
-    # lets Frappe Cloud resolve it while installing this app; a bare "release_tests"
-    # cannot be resolved anywhere. For local dev, install it editable first
-    # (see README) and pip will keep that checkout.
-    "release_tests @ git+https://github.com/frappe/release_tests.git@main",
-]
+dependencies = []
 
 [build-system]
 requires = ["flit_core >=3.4,<4"]
@@ -28,6 +21,11 @@ name = "release_manager"
 # "Could not find a compatible Frappe version in pyproject.toml".
 [tool.bench.frappe-dependencies]
 frappe = ">=16.0.0,<17.0.0"
+# The execution engine, now a bench app of its own rather than a pip dependency.
+# Declared here so bench and Frappe Cloud refuse to install this app until the
+# engine is present, instead of failing later at `from release_tests import api`.
+# Same mechanism hrms uses to require erpnext.
+release_tests = ">=0.1.0"
 
 # Lets bench / Frappe Cloud build the Vue dashboard served at /release. Mirrors
 # the buildConfig in frontend/vite.config.js; without it the SPA is not built on

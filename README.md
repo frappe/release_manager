@@ -57,21 +57,28 @@ The **Release Manager** Workspace gives shortcuts and pass/fail dashboard charts
 
 ## Deploying to Frappe Cloud
 
-Add **only this app** in *Add app from GitHub* (`https://github.com/frappe/release_manager`).
-The `release_tests` engine is a plain Python library, not a Frappe app — it is declared
-as a pip dependency here and installed automatically with this app. Adding it through
-that dialog will fail, and should.
+Add **both** apps, in this order:
 
-Two things make the repo acceptable to Frappe Cloud, both in `pyproject.toml`:
+1. `https://github.com/frappe/release_tests` — the execution engine
+2. `https://github.com/frappe/release_manager` — this app
 
-- `[tool.bench.frappe-dependencies]` — without it the dialog reports *"Could not find a
-  compatible Frappe version in pyproject.toml"*.
+Order matters: `pyproject.toml` declares `release_tests` under
+`[tool.bench.frappe-dependencies]`, the same way hrms requires erpnext, so Frappe
+Cloud will refuse to install this app until the engine is there. That is
+deliberate — the alternative is a missing engine that only shows up as an
+ImportError the first time a run executes.
+
+Two other things in `pyproject.toml` matter for the deploy:
+
+- `[tool.bench.frappe-dependencies]` — without it the dialog reports *"Could not
+  find a compatible Frappe version in pyproject.toml"*.
 - `[tool.bench.assets]` — tells the build to compile the Vue dashboard, otherwise
   `/release` deploys empty.
 
-The engine is referenced as `git+https://github.com/frappe/release_tests.git@main`, so
-a bench build picks up whatever is on that branch. Push `release_tests` before
-rebuilding if you want engine changes included.
+> The engine used to be pulled in as a `git+https` pip dependency instead. That
+> worked locally but was the wrong shape for Frappe Cloud, where the app is the
+> unit of deployment: the dependency was invisible in the Apps list, pinned to a
+> moving branch, and silent about failure until runtime.
 
 ## Dev install
 
