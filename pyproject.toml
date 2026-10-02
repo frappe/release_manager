@@ -20,7 +20,13 @@ name = "release_manager"
 # this section the Frappe Cloud "Add app from GitHub" dialog refuses the repo with
 # "Could not find a compatible Frappe version in pyproject.toml".
 [tool.bench.frappe-dependencies]
-frappe = ">=16.0.0,<17.0.0"
+# The "-dev" lower bound is load-bearing, not cosmetic. Frappe Cloud compares with
+# prerelease-aware semantics, where a develop build reporting 17.0.0-dev does NOT
+# satisfy "<17.0.0" — you have to opt into prereleases explicitly. Deploying to a
+# develop bench was refused with:
+#   Incompatible app version found, release_manager, frappe, 17.0.0-dev, >=16.0.0,<17.0.0
+# Same form crm and helpdesk use for exactly this reason.
+frappe = ">=16.0.0-dev,<18.0.0"
 # The execution engine, now a bench app of its own rather than a pip dependency.
 # Declared here so bench and Frappe Cloud refuse to install this app until the
 # engine is present, instead of failing later at `from release_tests import api`.
