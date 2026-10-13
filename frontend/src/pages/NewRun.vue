@@ -38,6 +38,12 @@
             </span>
           </div>
           <p v-if="uiSpecs.loading" class="text-sm text-ink-gray-5">Loading test suites…</p>
+          <div v-else-if="uiSpecs.error" class="space-y-1">
+            <ErrorMessage :message="`Could not load the test suites: ${uiSpecs.error}`" />
+            <a class="text-sm text-ink-blue-3 cursor-pointer" @click="uiSpecs.submit({ site })">
+              Try again
+            </a>
+          </div>
           <p v-else-if="!shownSpecs.length" class="text-sm text-ink-gray-5">
             No UI test suites for this site's Frappe version.
           </p>
