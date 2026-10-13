@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -461,16 +462,84 @@ def _cypress_env(site_doc) -> dict:
     return env
 
 
+# Spec folders a site's Frappe version runs, in order. A polished site also runs
+# the plain v16 specs: polished keeps v16's flows (Sales Invoice, purchase cycle…).
+_UI_SPEC_FOLDERS = {"v16-polished": ["v16-polished", "v16"]}
+
+
+def _ui_specs_for(version: str) -> list[dict]:
+    """Every Cypress spec for a Frappe version, read from the test files themselves.
+
+    Each spec declares its app on its first line (``// @app erpnext``), so a new
+    spec shows up here without anyone maintaining a list. Title is the spec's
+    first ``describe(...)`` name.
+    """
+    ui_path = _ui_tests_path()
+    specs = []
+    for folder in _UI_SPEC_FOLDERS.get(version, [version]):
+        directory = os.path.join(ui_path, "cypress", "e2e", folder)
+        if not os.path.isdir(directory):
+            continue
+        for filename in sorted(os.listdir(directory)):
+            if not filename.endswith(".cy.js"):
+                continue
+            with open(os.path.join(directory, filename)) as handle:
+                text = handle.read(4000)
+            app = re.search(r"^//\s*@app\s+(\S+)", text, re.M)
+            title = re.search(r"describe\(\s*[\"'`](.+?)[\"'`]", text)
+            specs.append(
+                {
+                    "spec": f"cypress/e2e/{folder}/{filename}",
+                    "folder": folder,
+                    "app": app.group(1) if app else "frappe",
+                    "title": title.group(1) if title else filename,
+                }
+            )
+    return specs
+
+
 @frappe.whitelist()
-def run_ui_test(site: str, headed: int = 1) -> str:
-    """Create + queue a UI (Cypress) Release Test for the site's Frappe version."""
+def list_ui_specs(site: str) -> list[dict]:
+    """UI specs available for a site, marking whether the site has each spec's app.
+
+    "installed" comes from the site's last Test Connection; None when it has never
+    been checked, so the picker can say "unknown" rather than guess.
+    """
+    site_doc = frappe.get_doc("Testing Site", site)
+    apps = None
+    if site_doc.last_detected_apps:
+        try:
+            apps = set(json.loads(site_doc.last_detected_apps))
+        except ValueError:
+            apps = None
+    specs = _ui_specs_for(site_doc.frappe_version or "v16")
+    for spec in specs:
+        spec["installed"] = None if apps is None else spec["app"] in apps
+    return specs
+
+
+@frappe.whitelist()
+def run_ui_test(site: str, headed: int = 1, specs: str | list | None = None) -> str:
+    """Create + queue a UI (Cypress) Release Test for the site's Frappe version.
+
+    ``specs`` limits the run to the chosen spec files (from ``list_ui_specs``);
+    empty runs them all. Only known spec paths are accepted, since they end up
+    on the Cypress command line.
+    """
     site_doc = frappe.get_doc("Testing Site", site)
     version = site_doc.frappe_version or "v16"
+    chosen = frappe.parse_json(specs) if specs else []
+    known = {s["spec"] for s in _ui_specs_for(version)}
+    unknown = [s for s in chosen if s not in known]
+    if unknown:
+        frappe.throw(f"Unknown UI test suite(s) for {version}: {', '.join(unknown)}")
     run = frappe.new_doc("Release Test")
     run.site = site
     run.layer = "UI"
     run.trigger = "Manual"
-    run.run_title = f"UI Tests ({version}) — {site}"
+    scope = f"{len(chosen)} suite{'s' if len(chosen) != 1 else ''}" if chosen else "all suites"
+    run.run_title = f"UI Tests ({version}, {scope}) — {site}"
+    run.ui_specs = "\n".join(chosen)
     run.insert(ignore_permissions=True)
     run.db_set("status", "Queued")
     frappe.enqueue(
@@ -503,6 +572,12 @@ def execute_ui_run(run: str, headed: int = 1) -> None:
     env.update(
         {"SPEC_DIR": f"cypress/e2e/{version}", "RESULT_FILE": result_file, "HEADED": "1" if int(headed) else "0"}
     )
+    chosen = [s for s in (doc.ui_specs or "").splitlines() if s.strip()]
+    if chosen:
+        env["SPECS"] = ",".join(chosen)  # run.js runs only these
+    else:
+        # No selection: every spec the version runs (a polished site includes v16's).
+        env["SPECS"] = ",".join(s["spec"] for s in _ui_specs_for(version))
     doc.db_set(
         "log", f"Launching Cypress ({version}, {'headed' if int(headed) else 'headless'}) in {ui_path}…", commit=True
     )
@@ -626,13 +701,14 @@ def run_progress(run: str) -> dict:
         if suite not in planned:
             planned.append(suite)
 
-    # UI runs have no test cases — enumerate the version's Cypress specs so they
-    # show up as a queue too (spec relative path matches the Test Result suite).
+    # UI runs have no test cases: queue the suites chosen for the run, or every
+    # suite the version runs when none were chosen — the same list execute_ui_run
+    # hands to Cypress (spec relative path matches the Test Result suite).
     if not planned and doc.layer == "UI":
-        version = frappe.db.get_value("Testing Site", doc.site, "frappe_version") or "v16"
-        spec_dir = os.path.join(_ui_tests_path(), "cypress", "e2e", version)
-        if os.path.isdir(spec_dir):
-            planned = [f"cypress/e2e/{version}/{f}" for f in sorted(os.listdir(spec_dir)) if f.endswith(".cy.js")]
+        planned = [s for s in (doc.ui_specs or "").splitlines() if s.strip()]
+        if not planned:
+            version = frappe.db.get_value("Testing Site", doc.site, "frappe_version") or "v16"
+            planned = [s["spec"] for s in _ui_specs_for(version)]
 
     running = doc.status in ("Queued", "Running")
     order = planned or sorted(results.keys())
@@ -743,7 +819,9 @@ def rerun(run: str) -> str:
     """
     src = frappe.get_doc("Release Test", run)
     if src.layer == "UI":
-        return run_ui_test(src.site)
+        # Same suites as before, not everything.
+        chosen = [s for s in (src.ui_specs or "").splitlines() if s.strip()]
+        return run_ui_test(src.site, specs=chosen or None)
     new = frappe.new_doc("Release Test")
     new.site = src.site
     new.run_title = src.run_title
