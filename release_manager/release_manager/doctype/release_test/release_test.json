@@ -11,6 +11,7 @@
   "site",
   "layer",
   "test_cases",
+  "ui_specs",
   "column_break_run",
   "plan",
   "trigger",
@@ -60,6 +61,14 @@
    "label": "Test Cases",
    "options": "Release Plan Case",
    "description": "Leave empty to run all applicable test cases on the site."
+  },
+  {
+   "fieldname": "ui_specs",
+   "fieldtype": "Small Text",
+   "label": "UI Test Suites",
+   "read_only": 1,
+   "depends_on": "eval:doc.layer=='UI'",
+   "description": "The browser (Cypress) spec files chosen for this UI run, one per line. Empty means every spec for the site's Frappe version."
   },
   {
    "fieldname": "column_break_run",
