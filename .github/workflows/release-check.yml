@@ -1,0 +1,90 @@
+name: Release check
+
+# Cross-app release check: frappe + erpnext + hrms + india_compliance tested
+# together on the v15 and v16 release candidates (version-N-hotfix).
+# Advisory: it reports, it does not block any release. See ci/release_check.sh.
+
+on:
+  schedule:
+    - cron: "30 20 * * *" # nightly, 02:00 IST
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: 'Versions to check, as JSON (e.g. ["16"])'
+        default: '["15", "16"]'
+        type: string
+      engine_ref:
+        description: "release_tests branch or commit"
+        default: "main"
+        type: string
+  push:
+    paths:
+      - ".github/workflows/release-check.yml"
+      - "ci/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: v${{ matrix.version }} ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(github.event.inputs.versions || '["15", "16"]') }}
+        mode: [upgrade, fresh]
+    env:
+      DB_ROOT_PASSWORD: root
+      RT_ADMIN_PW: admin
+      ENGINE_DIR: ${{ github.workspace }}/engine
+      OUT_DIR: ${{ github.workspace }}/out
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out release_tests engine
+        uses: actions/checkout@v4
+        with:
+          repository: frappe/release_tests
+          ref: ${{ github.event.inputs.engine_ref || 'main' }}
+          path: engine
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.version == '16' && '3.14' || '3.11' }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.version == '16' && '24' || '20' }}
+
+      - name: System packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q mariadb-server mariadb-client libmariadb-dev pkg-config redis-server
+          sudo systemctl stop redis-server || true
+          sudo mariadb -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_ROOT_PASSWORD}'; FLUSH PRIVILEGES;"
+          sudo mariadb -uroot -p"${DB_ROOT_PASSWORD}" -e "SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_unicode_ci';"
+          npm install -g yarn
+          pip install frappe-bench
+          echo "127.0.0.1 ci.localhost" | sudo tee -a /etc/hosts
+
+      - name: Run release check
+        run: bash ci/release_check.sh "${{ matrix.version }}" "${{ matrix.mode }}"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-check-v${{ matrix.version }}-${{ matrix.mode }}
+          path: |
+            out/*.json
+            out/*.md
+            out/runs/
+            out/bench-start-*.log
+          if-no-files-found: warn
+          retention-days: 90
