@@ -49,7 +49,49 @@ bench get-app --skip-assets --branch "$START" hrms https://github.com/frappe/hrm
 bench get-app --skip-assets --branch "$START" india_compliance https://github.com/resilient-tech/india-compliance
 endlog
 
+start_bench() {
+  # own process group, so stop_bench can stop web, workers and redis together
+  setsid bench start > "$OUT_DIR/bench-start-$1.log" 2>&1 &
+  BENCH_PGID=$!
+  # redis must be up before new-site / migrate
+  for port in 11000 13000; do
+    for _ in $(seq 1 60); do
+      (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && { exec 3>&- 3<&-; break; }
+      sleep 1
+    done
+  done
+}
+
+wait_for_site() {
+  for _ in $(seq 1 120); do
+    if curl -sf -H "Host: $SITE" http://127.0.0.1:8000/api/method/ping >/dev/null; then return 0; fi
+    sleep 2
+  done
+  echo "site did not come up"; tail -50 "$OUT_DIR"/bench-start-*.log; return 1
+}
+
+stop_bench() {
+  kill -INT -- "-$BENCH_PGID" 2>/dev/null || true
+  sleep 5
+  kill -KILL -- "-$BENCH_PGID" 2>/dev/null || true
+  sleep 2
+}
+
+record_commits() {
+  python - "$1" "${APPS[@]}" <<'PY' > "$OUT_DIR/commits-$1.json"
+import json, subprocess, sys
+phase, apps = sys.argv[1], sys.argv[2:]
+out = {"phase": phase, "apps": {}}
+for app in apps:
+    git = lambda *a: subprocess.run(["git", "-C", f"apps/{app}", *a], capture_output=True, text=True).stdout.strip()
+    out["apps"][app] = {"commit": git("rev-parse", "HEAD"), "branch": git("rev-parse", "--abbrev-ref", "HEAD")}
+print(json.dumps(out, indent=2))
+PY
+  cat "$OUT_DIR/commits-$1.json"
+}
+
 log "new site"
+start_bench "$START"
 bench new-site "$SITE" --db-root-username root --db-root-password "$DB_ROOT_PASSWORD" \
   --admin-password "$RT_ADMIN_PW" \
   --install-app erpnext --install-app hrms --install-app india_compliance
@@ -74,37 +116,6 @@ print(json.dumps({"args": {
 PY
 )"
 endlog
-
-start_bench() {
-  # own process group, so stop_bench can stop web, workers and redis together
-  setsid bench start > "$OUT_DIR/bench-start-$1.log" 2>&1 &
-  BENCH_PGID=$!
-  for _ in $(seq 1 120); do
-    if curl -sf -H "Host: $SITE" http://127.0.0.1:8000/api/method/ping >/dev/null; then return 0; fi
-    sleep 2
-  done
-  echo "site did not come up"; tail -50 "$OUT_DIR/bench-start-$1.log"; return 1
-}
-
-stop_bench() {
-  kill -INT -- "-$BENCH_PGID" 2>/dev/null || true
-  sleep 5
-  kill -KILL -- "-$BENCH_PGID" 2>/dev/null || true
-  sleep 2
-}
-
-record_commits() {
-  python - "$1" "${APPS[@]}" <<'PY' > "$OUT_DIR/commits-$1.json"
-import json, subprocess, sys
-phase, apps = sys.argv[1], sys.argv[2:]
-out = {"phase": phase, "apps": {}}
-for app in apps:
-    git = lambda *a: subprocess.run(["git", "-C", f"apps/{app}", *a], capture_output=True, text=True).stdout.strip()
-    out["apps"][app] = {"commit": git("rev-parse", "HEAD"), "branch": git("rev-parse", "--abbrev-ref", "HEAD")}
-print(json.dumps(out, indent=2))
-PY
-  cat "$OUT_DIR/commits-$1.json"
-}
 
 # --- engine ---------------------------------------------------------------
 log "engine"
@@ -136,13 +147,13 @@ run_suites() {
 }
 
 # --- runs -----------------------------------------------------------------
-start_bench "$START"
+wait_for_site
 record_commits "$START"
 
 if [ "$MODE" = upgrade ]; then
   run_suites baseline
-  stop_bench
 
+  # like `bench update`: new code, requirements, migrate (redis stays up), restart
   log "upgrade to $CANDIDATE"
   for app in "${APPS[@]}"; do
     git -C "apps/$app" fetch --depth 1 upstream "$CANDIDATE"
@@ -150,9 +161,11 @@ if [ "$MODE" = upgrade ]; then
   done
   bench setup requirements --python
   bench --site "$SITE" migrate
+  stop_bench
+  start_bench "$CANDIDATE"
+  wait_for_site
   endlog
 
-  start_bench "$CANDIDATE"
   record_commits "$CANDIDATE"
 fi
 
