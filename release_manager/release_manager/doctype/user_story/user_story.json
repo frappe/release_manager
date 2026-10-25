@@ -1,0 +1,296 @@
+{
+ "actions": [],
+ "autoname": "US-.#####",
+ "creation": "2026-10-25 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "status",
+  "column_break_head",
+  "app",
+  "product_area",
+  "risk",
+  "section_story",
+  "persona",
+  "layer",
+  "story",
+  "steps",
+  "expected_results",
+  "section_source",
+  "source_type",
+  "ticket_count",
+  "column_break_source",
+  "source_tickets",
+  "source_prs",
+  "section_review",
+  "review_notes",
+  "column_break_review",
+  "reviewed_by",
+  "reviewed_on",
+  "section_test",
+  "test_status",
+  "test_reference",
+  "check_list",
+  "check_list_confirmed",
+  "column_break_test",
+  "at_risk_release",
+  "last_result",
+  "last_run_on",
+  "story_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Story",
+   "reqd": 1,
+   "in_list_view": 1,
+   "description": "One line: who does what. e.g. Stock User submits a Stock Entry for a batch item"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Review Status",
+   "options": "Draft\nApproved\nNeeds Change\nRejected",
+   "default": "Draft",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "app",
+   "fieldtype": "Select",
+   "label": "App",
+   "options": "\nfrappe\nerpnext\nhrms\nindia_compliance",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "product_area",
+   "fieldtype": "Data",
+   "label": "Product Area",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "risk",
+   "fieldtype": "Select",
+   "label": "Risk",
+   "options": "High\nMedium\nLow",
+   "default": "Medium",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "description": "From how many release-regression tickets hit this flow"
+  },
+  {
+   "fieldname": "section_story",
+   "fieldtype": "Section Break",
+   "label": "The Story"
+  },
+  {
+   "fieldname": "persona",
+   "fieldtype": "Data",
+   "label": "Role (who)",
+   "description": "The role the flow is run as, e.g. Accounts User. Tests run as a real user with this role, never as Administrator."
+  },
+  {
+   "fieldname": "layer",
+   "fieldtype": "Select",
+   "label": "Tested Through",
+   "options": "API\nUI",
+   "default": "API",
+   "description": "API: business flow through the same calls the screens make. UI: clicks through the screens in a browser."
+  },
+  {
+   "fieldname": "story",
+   "fieldtype": "Small Text",
+   "label": "What they need",
+   "description": "As a <role>, I <do something> so that <outcome>."
+  },
+  {
+   "fieldname": "steps",
+   "fieldtype": "Text",
+   "label": "Steps",
+   "description": "Numbered steps, in plain words."
+  },
+  {
+   "fieldname": "expected_results",
+   "fieldtype": "Text",
+   "label": "Expected Results",
+   "reqd": 1,
+   "description": "One per line. Each line becomes a check in the test."
+  },
+  {
+   "fieldname": "section_source",
+   "fieldtype": "Section Break",
+   "label": "Why It Matters",
+   "collapsible": 0
+  },
+  {
+   "fieldname": "source_type",
+   "fieldtype": "Select",
+   "label": "Source",
+   "options": "Support tickets\nChangelog\nManual",
+   "default": "Manual",
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "ticket_count",
+   "fieldtype": "Int",
+   "label": "Regression Tickets",
+   "description": "Release-regression tickets linked to this flow"
+  },
+  {
+   "fieldname": "column_break_source",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_tickets",
+   "fieldtype": "Small Text",
+   "label": "Ticket Numbers"
+  },
+  {
+   "fieldname": "source_prs",
+   "fieldtype": "Small Text",
+   "label": "Pull Requests"
+  },
+  {
+   "fieldname": "section_review",
+   "fieldtype": "Section Break",
+   "label": "Review"
+  },
+  {
+   "fieldname": "review_notes",
+   "fieldtype": "Small Text",
+   "label": "Review Notes",
+   "description": "Required when the status is Needs Change or Rejected."
+  },
+  {
+   "fieldname": "column_break_review",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_test",
+   "fieldtype": "Section Break",
+   "label": "Test",
+   "collapsible": 1,
+   "description": "Filled in automatically once the story is approved and a test is generated."
+  },
+  {
+   "fieldname": "test_status",
+   "fieldtype": "Select",
+   "label": "Test Status",
+   "options": "Not generated\nProbation\nGraduated\nQuarantined",
+   "default": "Not generated",
+   "read_only": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "test_reference",
+   "fieldtype": "Data",
+   "label": "Test",
+   "read_only": 1
+  },
+  {
+   "fieldname": "check_list",
+   "fieldtype": "Text",
+   "label": "What the Test Checks",
+   "read_only": 1,
+   "description": "Plain-language list of the checks in the generated test. Confirm it matches the expected results."
+  },
+  {
+   "fieldname": "check_list_confirmed",
+   "fieldtype": "Check",
+   "label": "Check List Confirmed",
+   "description": "Tick when the checks above match the expected results."
+  },
+  {
+   "fieldname": "column_break_test",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "at_risk_release",
+   "fieldtype": "Data",
+   "label": "At Risk In",
+   "read_only": 1,
+   "description": "The release candidate whose changes touch this flow"
+  },
+  {
+   "fieldname": "last_result",
+   "fieldtype": "Data",
+   "label": "Last Result",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_run_on",
+   "fieldtype": "Datetime",
+   "label": "Last Run On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "story_key",
+   "fieldtype": "Data",
+   "label": "Story Key",
+   "unique": 1,
+   "read_only": 1,
+   "hidden": 1,
+   "no_copy": 1,
+   "description": "Stable key used by imports so re-imports update drafts instead of duplicating them."
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Release Manager",
+ "name": "User Story",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1,
+   "email": 1,
+   "share": 1,
+   "create": 1,
+   "write": 1,
+   "delete": 1
+  },
+  {
+   "role": "Story Reviewer",
+   "read": 1,
+   "report": 1,
+   "export": 1,
+   "print": 1,
+   "email": 1,
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "search_fields": "title,product_area,persona",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "title_field": "title",
+ "track_changes": 1
+}
