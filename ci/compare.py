@@ -16,6 +16,9 @@ Classes, for a check that failed on the candidate:
     failing          no baseline to compare with (fresh mode, or a new check)
 and "fixed" for a check that failed on the released version and now passes.
 Harness failures (the test itself broke) are counted, never called regressions.
+So are test-data collisions: in the upgrade job the suites run twice on one
+site, and a step that creates a uniquely named record can fail the second time
+with "already exists". That is the test, not the release.
 """
 
 from __future__ import annotations
@@ -42,8 +45,16 @@ def _steps(run: dict | None) -> dict[KEY, dict]:
     return out
 
 
+COLLISION = ("already exists", "Duplicate entry", "DuplicateEntryError")
+
+
 def _kind(step: dict) -> str:
     return (step.get("details") or {}).get("kind", "needs triage")
+
+
+def _is_collision(step: dict) -> bool:
+    text = f"{step.get('error') or ''} {(step.get('details') or {}).get('actual') or ''}"
+    return any(marker in text for marker in COLLISION)
 
 
 def failed_suites(path: str) -> str:
@@ -64,7 +75,7 @@ def classify(baseline: dict | None, candidate: dict, rerun: dict | None) -> dict
             continue
         if key[0] in rerun_suites and again.get(key, {}).get("status") == "pass":
             out["flaky"].append((key, step))
-        elif _kind(step) == "harness":
+        elif _kind(step) == "harness" or _is_collision(step):
             out["harness"].append((key, step))
         elif baseline is None or before not in ("pass", "fail"):
             out["failing"].append((key, step))
@@ -126,7 +137,7 @@ def report(mode: str, version: str, out_dir: Path) -> int:
         ("Failing checks", "failing"),
         ("Already failing on the released version", "already failing"),
         ("Flaky: failed once, passed on re-run (not counted)", "flaky"),
-        ("Broken tests (harness, not the product)", "harness"),
+        ("Broken tests or test-data collisions (not the product)", "harness"),
         ("Fixed by the candidate", "fixed"),
     )
     for heading, group in sections:

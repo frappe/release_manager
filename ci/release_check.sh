@@ -49,6 +49,12 @@ bench get-app --skip-assets --branch "$START" hrms https://github.com/frappe/hrm
 bench get-app --skip-assets --branch "$START" india_compliance https://github.com/resilient-tech/india-compliance
 endlog
 
+# desk pages and print formats need built assets, as on any real site
+log "build assets ($START)"
+bench setup requirements --node
+bench build
+endlog
+
 start_bench() {
   # own process group, so stop_bench can stop web, workers and redis together
   setsid bench start > "$OUT_DIR/bench-start-$1.log" 2>&1 &
@@ -159,7 +165,8 @@ if [ "$MODE" = upgrade ]; then
     git -C "apps/$app" fetch --depth 1 upstream "$CANDIDATE"
     git -C "apps/$app" checkout -f -B "$CANDIDATE" FETCH_HEAD
   done
-  bench setup requirements --python
+  bench setup requirements
+  bench build
   bench --site "$SITE" migrate
   stop_bench
   start_bench "$CANDIDATE"
